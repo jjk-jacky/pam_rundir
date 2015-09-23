@@ -1,0 +1,9 @@
+*.swp
+*.bak
+*.o
+*.so
+*.orig
+*.rej
+/config.mak
+/config.h
+/pam_rundir.8

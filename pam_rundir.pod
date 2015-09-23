@@ -1,0 +1,60 @@
+=head1 NAME
+
+pam_rundir - Provide user runtime directory
+
+=head1 SYNOPSIS
+
+B<pam_rundir>
+
+=head1 DESCRIPTION
+
+B<pam_rundir> is a PAM module that can be used to provide user runtime
+directory, as described in the XDG Base Directory Specification[1].
+
+The directory will be created on login (open session) and removed on logout
+(close session), and its full path made available in an environment variable,
+usually I<$XDG_RUNTIME_DIR>.
+
+=head1 MODULE TYPES PROVIDED
+
+Only the B<session> module type is provided.
+
+=head1 EXAMPLE
+
+The suggested usage is:
+
+    session     optional        pam_rundir.so
+
+=head1 NOTES
+
+=over
+
+=item [1]
+
+http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
+
+=back
+
+=head1 SEE ALSO
+
+B<pam.conf>(5), B<pam.d>(5), B<pam>(8)
+
+=head1 BUGS
+
+They're probably crawling somewhere in there... if you happen to catch one,
+(or more) report it and I'll do my best to squash it.
+
+=head1 REPOSITORY
+
+You can find the latest source code of B<pam_rundir> as well as report bugs
+and/or suggest features on its GitHub repository, available at
+L<https://github.com/jjk-jacky/pam_rundir>; or visit its official website at
+L<http://jjacky.com/pam_rundir>
+
+=head1 AUTHOR
+
+=over
+
+=item Olivier Brunel <jjk@jjacky.com>
+
+=back

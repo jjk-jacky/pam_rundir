@@ -1,0 +1,89 @@
+#!/bin/sh
+
+usage() {
+    cat <<EOF
+usage: ./configure [OPTION...]
+
+Defaults are in brackets.
+
+ --prefix=PREFIX                Use PREFIX as main prefix [/]
+ --securedir=DIR                Use DIR as path to install to [PREFIX/lib/security]
+
+ --with-parentdir=DIR           Set DIR as parent directory for runtime dirs [/run/users]
+ --with-varname=NAME            Set NAME as variable name in the environment [XDG_RUNTIME_DIR]
+EOF
+    exit $1
+}
+
+prefix=/
+securedir=
+parentdir=/run/users
+varname=XDG_RUNTIME_DIR
+
+cmdline="$0 $@"
+while [ $# -ge 1 ]; do
+    opt=${1%%=*}
+    val=${1#*=}
+    case "$opt" in
+        "--prefix")
+            prefix="$val"
+            ;;
+        "--securedir")
+            securedir="$val"
+            ;;
+        "--with-parentdir")
+            parentdir="$val"
+            ;;
+        "--with-varname")
+            varname="$val"
+            ;;
+        "-h"|"--help")
+            usage 0
+            ;;
+        *)
+            echo "invalid option: $opt"
+            usage 1
+            ;;
+    esac
+    shift
+done
+
+l=${#prefix}
+l=$(($l-1))
+if [ "${prefix:$l}" = "/" ]; then
+    prefix=${prefix:0:$l}
+fi
+
+if [ -z "$securedir" ]; then
+    securedir="$prefix/lib/security"
+fi
+
+exec 4>&1 1>config.mak
+cat <<EOF
+# This file was generated with: $cmdline
+# Do not edit manually.
+
+securedir := $securedir
+EOF
+exec 1>&4 4<&-
+
+exec 4>&1 1>config.h
+cat <<EOF
+/* This file was generated with: $cmdline */
+/* Do not edit manually. */
+
+/* name of variable to set in environment */
+#define VAR_NAME            "$varname"
+
+/* parent dir for runtime dirs */
+#define PARENT_DIR          "$parentdir"
+
+EOF
+exec 1>&4 4<&-
+
+cat <<EOF
+    Parent dir of runtime dirs          $parentdir
+    Variable to set in environment      $varname
+
+    Install module to:                  $securedir
+EOF

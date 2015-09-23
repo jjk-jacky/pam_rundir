@@ -1,0 +1,32 @@
+Build Instructions
+------------------
+
+* Requirements
+  ------------
+
+  - A POSIX-compliant C development environment
+  - GNU make version 4.0 or later
+  - Linux-PAM
+
+ Note that pam_rundir is obviously meant for Linux systems, and relies on Linux
+ behaviors; Specifically:
+
+  - that mkdir() will use effective user/group ID to set ownership of newly
+    created directory, a Linux-specific behavior.
+  - that unlink() on a directory will return EISDIR, whereas POSIX would have it
+    return EPERM instead.
+
+
+* Standard usage
+  --------------
+
+  ./configure && make && sudo make install
+
+ will work for most users.
+
+
+* Customization
+  -------------
+
+ You can customize paths and options via flags given to configure.
+ See ./configure --help for a list of all available configure options.
