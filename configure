@@ -48,11 +48,7 @@ while [ $# -ge 1 ]; do
     shift
 done
 
-l=${#prefix}
-l=$(($l-1))
-if [ "${prefix:$l}" = "/" ]; then
-    prefix=${prefix:0:$l}
-fi
+prefix=${prefix%/}
 
 if [ -z "$securedir" ]; then
     securedir="$prefix/lib/security"
