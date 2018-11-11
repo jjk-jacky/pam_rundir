@@ -43,7 +43,7 @@ ensure_parent_dir (void)
     mode_t um = umask (S_IWOTH);
 
     if (mkdir (PARENT_DIR, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0
-            && errno != EEXIST)
+            && (errno != EEXIST || chmod(PARENT_DIR, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0))
         r = 0;
     umask (um);
     return r;
