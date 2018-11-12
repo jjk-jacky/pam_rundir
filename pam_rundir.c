@@ -362,6 +362,7 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         char file[sizeof (PARENT_DIR) + l + 2];
         int fd;
         int count = 0;
+        int secbits = -1;
 
         print_filename (file, (int) pw->pw_uid, l);
         fd = open_and_lock (file);
@@ -400,7 +401,9 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 
         /* to bypass permission checks for mkdir, in case it isn't group
          * writable */
-        prctl (PR_SET_SECUREBITS, SECBIT_NO_SETUID_FIXUP);
+        secbits = prctl (PR_GET_SECUREBITS);
+        if (secbits != -1)
+            prctl (PR_SET_SECUREBITS, (unsigned long) secbits | SECBIT_NO_SETUID_FIXUP);
         /* set euid so if we do create the dir, it is own by the user */
         if (seteuid (pw->pw_uid) < 0)
         {
@@ -426,6 +429,8 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         }
 
 done:
+        if (secbits != -1)
+            prctl (PR_SET_SECUREBITS, (unsigned long) secbits);
         close (fd); /* also unlocks */
     }
 
