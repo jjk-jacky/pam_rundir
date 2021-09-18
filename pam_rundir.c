@@ -404,8 +404,8 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         secbits = prctl (PR_GET_SECUREBITS);
         if (secbits != -1)
             prctl (PR_SET_SECUREBITS, (unsigned long) secbits | SECBIT_NO_SETUID_FIXUP);
-        /* set euid so if we do create the dir, it is own by the user */
-        if (seteuid (pw->pw_uid) < 0)
+        /* set euid and egid so if we do create the dir, it is owned by the user */
+        if (seteuid (pw->pw_uid) < 0 || setegid (pw->pw_gid) < 0)
         {
             r = -1;
             goto done;
@@ -422,7 +422,7 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
             pam_putenv (pamh, buf);
         }
         /* restore */
-        if (seteuid (0) < 0)
+        if (seteuid (0) < 0 || setegid (0) < 0)
         {
             r = -1;
             goto done;
