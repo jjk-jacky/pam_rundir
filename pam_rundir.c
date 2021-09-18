@@ -103,7 +103,7 @@ open_and_lock (const char *file)
 static inline void
 print_filename (char *s, int uid, int l)
 {
-    /* construct file name, e.g: "/run/users/.1000" */
+    /* construct file name, e.g: "/run/user/.1000" */
     memcpy (s, PARENT_DIR, sizeof (PARENT_DIR) - 1);
     s[sizeof (PARENT_DIR) - 1] = '/';
     s[sizeof (PARENT_DIR)] = '.';

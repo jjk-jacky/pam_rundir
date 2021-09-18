@@ -17,7 +17,7 @@ EOF
 
 prefix=/
 securedir=
-parentdir=/run/users
+parentdir=/run/user
 varname=XDG_RUNTIME_DIR
 
 cmdline="$0 $@"
