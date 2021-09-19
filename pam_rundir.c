@@ -20,16 +20,16 @@
 
 #include "config.h"
 
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/prctl.h>
-#include <linux/securebits.h>
-#include <string.h>
-#include <pwd.h>
-#include <errno.h>
 #include <dirent.h>
-#include <utmp.h>
+#include <errno.h>
+#include <linux/securebits.h>
+#include <pwd.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <utmp.h>
 
 #define PAM_SM_SESSION
 #include <security/pam_modules.h>
@@ -292,55 +292,49 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
     /* get length for uid as ascii string, i.e. in file/folder name */
     l = intlen ((int) pw->pw_uid);
 
+    char file[sizeof (PARENT_DIR) + l + 2];
+    int secbits = -1;
+
+    print_filename (file, (int) pw->pw_uid, l);
+
+    /* construct runtime dir name, i.e. remove the dot before uid */
+    memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
+
+    /* flag for processing on close_session */
+    if (pam_set_data (pamh, FLAG_NAME, (void *) 1, NULL) != PAM_SUCCESS)
     {
-        char file[sizeof (PARENT_DIR) + l + 2];
-        int secbits = -1;
+        /* well shit... try to revert, though we can't do nothing if it
+         * fails. A PAM_BUF_ERR (only possible error) should be pretty rare
+         * though (especially combined with a failure to re-write). */
+        goto done;
+    }
 
-        print_filename (file, (int) pw->pw_uid, l);
+    /* to bypass permission checks for mkdir, in case it isn't group
+     * writable */
+    secbits = prctl (PR_GET_SECUREBITS);
+    if (secbits != -1)
+        prctl (PR_SET_SECUREBITS, (unsigned long) secbits | SECBIT_NO_SETUID_FIXUP);
+    /* set euid and egid so if we do create the dir, it is owned by the user */
+    if (seteuid (pw->pw_uid) < 0 || setegid (pw->pw_gid) < 0)
+        goto done;
+    if (mkdir (file, S_IRWXU) == 0 || errno == EEXIST)
+    {
+        l = strlen (file);
+        char buf[sizeof (VAR_NAME) + 1 + l];
 
-        /* construct runtime dir name, i.e. remove the dot before uid */
-        memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
+        memcpy (buf, VAR_NAME, sizeof (VAR_NAME) - 1);
+        buf[sizeof (VAR_NAME) - 1] = '=';
+        memcpy (buf + sizeof (VAR_NAME), file, l + 1);
 
-        /* flag for processing on close_session */
-        if (pam_set_data (pamh, FLAG_NAME, (void *) 1, NULL) != PAM_SUCCESS)
-        {
-            /* well shit... try to revert, though we can't do nothing if it
-             * fails. A PAM_BUF_ERR (only possible error) should be pretty rare
-             * though (especially combined with a failure to re-write). */
-            goto done;
-        }
-
-        /* to bypass permission checks for mkdir, in case it isn't group
-         * writable */
-        secbits = prctl (PR_GET_SECUREBITS);
-        if (secbits != -1)
-            prctl (PR_SET_SECUREBITS, (unsigned long) secbits | SECBIT_NO_SETUID_FIXUP);
-        /* set euid and egid so if we do create the dir, it is owned by the user */
-        if (seteuid (pw->pw_uid) < 0 || setegid (pw->pw_gid) < 0)
-        {
-            goto done;
-        }
-        if (mkdir (file, S_IRWXU) == 0 || errno == EEXIST)
-        {
-            l = strlen (file);
-            char buf[sizeof (VAR_NAME) + 1 + l];
-
-            memcpy (buf, VAR_NAME, sizeof (VAR_NAME) - 1);
-            buf[sizeof (VAR_NAME) - 1] = '=';
-            memcpy (buf + sizeof (VAR_NAME), file, l + 1);
-
-            pam_putenv (pamh, buf);
-        }
-        /* restore */
-        if (seteuid (0) < 0 || setegid (0) < 0)
-        {
-            goto done;
-        }
+        pam_putenv (pamh, buf);
+    }
+    /* restore */
+    if (seteuid (0) < 0 || setegid (0) < 0)
+        goto done;
 
 done:
-        if (secbits != -1)
-            prctl (PR_SET_SECUREBITS, (unsigned long) secbits);
-    }
+    if (secbits != -1)
+        prctl (PR_SET_SECUREBITS, (unsigned long) secbits);
 
     return (r == 0) ? PAM_SUCCESS : PAM_SESSION_ERR;
 }
