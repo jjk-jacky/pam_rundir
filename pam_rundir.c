@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <linux/securebits.h>
 #include <pwd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
@@ -97,33 +98,6 @@ intlen (int n)
     return l;
 }
 
-static void
-print_int (char *s, int n, int l)
-{
-    s += l;
-    for (;;)
-    {
-        const char digits[] = "0123456789";
-
-        *--s = digits[n % 10];
-        if (n < 10)
-            break;
-        n /= 10;
-    }
-}
-
-static inline void
-print_filename (char *s, int uid, int l)
-{
-    /* construct file name, e.g: "/run/users/.1000" */
-    memcpy (s, PARENT_DIR, sizeof (PARENT_DIR) - 1);
-    s[sizeof (PARENT_DIR) - 1] = '/';
-    s[sizeof (PARENT_DIR)] = '.';
-    print_int (s + sizeof (PARENT_DIR) + 1, uid, l);
-    s[sizeof (PARENT_DIR) + 1 + l] = '\0';
-
-}
-
 static int
 rmrf (const char *path)
 {
@@ -148,10 +122,7 @@ rmrf (const char *path)
             int l = lp + strlen (dp->d_name) + 2;
             char name[l];
 
-            memcpy (name, path, lp);
-            name[lp] = '/';
-            memcpy (name + lp + 1, dp->d_name, l - lp - 1);
-
+            snprintf(name, l, "%s/%s", path, dp->d_name);
             r += rmrf (name);
         }
     }
@@ -253,16 +224,12 @@ pam_sm_close_session (pam_handle_t *pamh, int flags, int argc, const char **argv
     /* get length for uid as ascii string, i.e. in file/folder name */
     l = intlen ((int) pw->pw_uid);
 
-    char file[sizeof (PARENT_DIR) + l + 2];
-    print_filename (file, (int) pw->pw_uid, l);
+    /* construct user dir, e.g: "/run/user/1000" */
+    char dir[sizeof (PARENT_DIR) + l + 2];
+    snprintf(dir, sizeof (PARENT_DIR) + l + 2, "%s/%d", PARENT_DIR, pw->pw_uid);
 
     if (!user_has_session (user))
-    {
-        /* construct runtime dir name, i.e. remove the dot before uid */
-        memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
-
-        r = rmrf (file);
-    }
+        r = rmrf (dir);
 
     return (r == 0) ? PAM_SUCCESS : PAM_SESSION_ERR;
 }
@@ -292,13 +259,9 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
     /* get length for uid as ascii string, i.e. in file/folder name */
     l = intlen ((int) pw->pw_uid);
 
-    char file[sizeof (PARENT_DIR) + l + 2];
-    int secbits = -1;
-
-    print_filename (file, (int) pw->pw_uid, l);
-
-    /* construct runtime dir name, i.e. remove the dot before uid */
-    memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
+    /* construct user dir, e.g: "/run/user/1000" */
+    char dir[sizeof (PARENT_DIR) + l + 2];
+    snprintf(dir, sizeof (PARENT_DIR) + l + 2, "%s/%d", PARENT_DIR, pw->pw_uid);
 
     /* flag for processing on close_session */
     if (pam_set_data (pamh, FLAG_NAME, (void *) 1, NULL) != PAM_SUCCESS)
@@ -311,21 +274,17 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 
     /* to bypass permission checks for mkdir, in case it isn't group
      * writable */
+    int secbits = -1;
     secbits = prctl (PR_GET_SECUREBITS);
     if (secbits != -1)
         prctl (PR_SET_SECUREBITS, (unsigned long) secbits | SECBIT_NO_SETUID_FIXUP);
     /* set euid and egid so if we do create the dir, it is owned by the user */
     if (seteuid (pw->pw_uid) < 0 || setegid (pw->pw_gid) < 0)
         goto done;
-    if (mkdir (file, S_IRWXU) == 0 || errno == EEXIST)
+    if (mkdir (dir, S_IRWXU) == 0 || errno == EEXIST)
     {
-        l = strlen (file);
-        char buf[sizeof (VAR_NAME) + 1 + l];
-
-        memcpy (buf, VAR_NAME, sizeof (VAR_NAME) - 1);
-        buf[sizeof (VAR_NAME) - 1] = '=';
-        memcpy (buf + sizeof (VAR_NAME), file, l + 1);
-
+        char buf[sizeof (VAR_NAME) + strlen (dir) + 1];
+        snprintf(buf, sizeof (VAR_NAME) + strlen (dir) + 1, "%s=%s", VAR_NAME, dir);
         pam_putenv (pamh, buf);
     }
     /* restore */
