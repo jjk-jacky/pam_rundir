@@ -161,10 +161,12 @@ user_has_session (const char *user)
         } else if (utmp_entry->ut_type == USER_PROCESS)
         {
             // This is a login.
+            int pos = array_pos (utmp_entry->ut_id, ttys_ids, ttys);
             if (strcmp (utmp_entry->ut_user, user) == 0)
             {
-                int pos = array_pos (utmp_entry->ut_id, ttys_ids, ttys);
                 ttys_login[pos] = 1;
+            } else {
+                ttys_login[pos] = 0;
             }
         }
         utmp_entry = getutxent();
