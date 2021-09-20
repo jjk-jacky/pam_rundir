@@ -30,7 +30,7 @@
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <utmp.h>
+#include <utmpx.h>
 
 #define PAM_SM_SESSION
 #include <security/pam_modules.h>
@@ -149,8 +149,8 @@ user_has_session (const char *user)
      * Store the id in the char array.
      * Update the login state at every iteration. */
 
-    setutent();
-    struct utmp *utmp_entry = getutent();
+    setutxent();
+    struct utmpx *utmp_entry = getutxent();
     while (utmp_entry)
     {
         if (utmp_entry->ut_type == LOGIN_PROCESS)
@@ -167,7 +167,7 @@ user_has_session (const char *user)
                 ttys_login[pos] = 1;
             }
         }
-        utmp_entry = getutent();
+        utmp_entry = getutxent();
     }
 
     for (int i = 0; i < ttys; ++i)
