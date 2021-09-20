@@ -21,22 +21,36 @@
 #include "config.h"
 
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/file.h>
 #include <sys/prctl.h>
 #include <linux/securebits.h>
 #include <string.h>
 #include <pwd.h>
-#include <fcntl.h>
 #include <errno.h>
 #include <dirent.h>
+#include <utmp.h>
+#include <stdlib.h>
 
 #define PAM_SM_SESSION
 #include <security/pam_modules.h>
-#include <security/pam_appl.h>
 
 #define FLAG_NAME           "pam_rundir_has_counted"
+
+static int
+array_pos (char *id, char *ttys_ids[], int len)
+{
+    for (int i = 0; i < len; ++i)
+    {
+        if (strcmp (ttys_ids[i], "") == 0)
+        {
+            ttys_ids[i] = strdup(id);
+            return i;
+        }
+        if (strcmp (ttys_ids[i], id) == 0)
+            return i;
+    }
+    return -1;
+}
 
 static int
 ensure_parent_dir (void)
@@ -49,6 +63,23 @@ ensure_parent_dir (void)
         r = 0;
     umask (um);
     return r;
+}
+
+static int
+get_number_of_ttys (void)
+{
+    DIR *dir;
+    struct dirent *ent;
+    int count = 0;
+    if ((dir = opendir ("/dev")) != NULL)
+    {
+        while ((ent = readdir (dir)) != NULL)
+        {
+            if (strncmp ("tty", ent->d_name, 3) == 0)
+                ++count;
+        }
+    }
+    return count;
 }
 
 static int
@@ -81,142 +112,16 @@ print_int (char *s, int n, int l)
     }
 }
 
-static int
-open_and_lock (const char *file)
-{
-    int fd;
-
-    do { fd = open (file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR); }
-    while (fd < 0 && errno == EINTR);
-    if (fd < 0)
-        return fd;
-
-    if (flock (fd, LOCK_EX) < 0)
-    {
-        close (fd);
-        return -1;
-    }
-
-    return fd;
-}
-
 static inline void
 print_filename (char *s, int uid, int l)
 {
-    /* construct file name, e.g: "/run/user/.1000" */
+    /* construct file name, e.g: "/run/users/.1000" */
     memcpy (s, PARENT_DIR, sizeof (PARENT_DIR) - 1);
     s[sizeof (PARENT_DIR) - 1] = '/';
     s[sizeof (PARENT_DIR)] = '.';
     print_int (s + sizeof (PARENT_DIR) + 1, uid, l);
     s[sizeof (PARENT_DIR) + 1 + l] = '\0';
 
-}
-
-static int
-read_counter (int fd)
-{
-    int count = 0;
-
-    /* read counter in file, as ascii string */
-    for (;;)
-    {
-        char buf[4];
-        int p;
-        int r;
-
-        r = read (fd, buf, sizeof (buf));
-        if (r == 0)
-            break;
-        else if (r < 0)
-        {
-            if (errno == EINTR)
-                continue;
-            else
-                return -1;
-        }
-        else if (count == 0 && r == 1 && buf[0] == '-')
-            /* special case: dir not usable, but not a failure */
-            return -2;
-
-        for (p = 0; r > 0; --r, ++p)
-        {
-            if (buf[p] < '0' || buf[p] > '9')
-                return -1;
-            count *= 10;
-            count += buf[p] - '0';
-        }
-    }
-    return count;
-}
-
-/* basically, this is called when we tried to update the counter but failed,
- * leaving the file in an invalid state (i.e. only partial write, or no
- * truncate).
- * So here, we try to make the file "properly invalid" so any further attempt to
- * read it will lead to a no-op (because of invalid data). Obviously though, if
- * we fail to e.g. seek or write, we can't do anything else...
- * (Anyhow, this will likely never be called.)
- */
-static void
-emergency_invalidate_counter (int fd)
-{
-    int r;
-
-    if (lseek (fd, 0, SEEK_SET) < 0)
-        return;
-
-    do { r = write (fd, "-", 1); }
-    while (r < 0 && errno == EINTR);
-
-    if (r == 1)
-        do { r = ftruncate (fd, 1); }
-        while (r < 0 && errno == EINTR);
-}
-
-static int
-write_counter (int fd, int count)
-{
-    int r;
-    int l;
-
-    r = lseek (fd, 0, SEEK_SET);
-    if (r < 0)
-        return r;
-
-    l = (count >= 0) ? intlen (count) : 1;
-    {
-        char buf[l];
-
-        if (count >= 0)
-            print_int (buf, count, l);
-        else
-            buf[0] = '-';
-
-        for (;;)
-        {
-            int w = 0;
-
-            r = write (fd, buf + w, l - w);
-            if (r < 0)
-            {
-                if (errno = EINTR)
-                    continue;
-                if (w > 0)
-                    emergency_invalidate_counter (fd);
-                return -1;
-            }
-
-            w += r;
-            if (w == l)
-                break;
-        }
-
-        do { r = ftruncate (fd, l); }
-        while (r < 0 && errno == EINTR);
-        if (r < 0)
-            emergency_invalidate_counter (fd);
-    }
-    return r;
 }
 
 static int
@@ -257,6 +162,67 @@ rmrf (const char *path)
     return r;
 }
 
+static int
+user_has_session (const char *user)
+{
+    int ttys = get_number_of_ttys ();
+    char *ttys_ids[ttys];
+    int ttys_login[ttys];
+
+    for (int i = 0; i < ttys; ++i) {
+        ttys_ids[i] = "";
+        ttys_login[i] = 0;
+    }
+
+    /* Loop through all the utmp entries.
+     * Store the id in the char array.
+     * Update the login state at every iteration. */
+
+    setutent();
+    struct utmp *utmp_entry = getutent();
+    while (utmp_entry)
+    {
+        if (utmp_entry->ut_type == LOGIN_PROCESS)
+        {
+            // This is a logout. The user is unknown.
+            int pos = array_pos (utmp_entry->ut_id, ttys_ids, ttys);
+            ttys_login[pos] = 0;
+        } else if (utmp_entry->ut_type == USER_PROCESS)
+        {
+            // This is a login.
+            if (strcmp (utmp_entry->ut_user, user) == 0)
+            {
+                int pos = array_pos (utmp_entry->ut_id, ttys_ids, ttys);
+                ttys_login[pos] = 1;
+            }
+        }
+        utmp_entry = getutent();
+    }
+
+    for (int i = 0; i < ttys; ++i)
+    {
+        if (strcmp (ttys_ids[i], ""))
+            free(ttys_ids[i]);
+    }
+
+    int logins = 0;
+    for (int i = 0; i < ttys; ++i)
+    {
+        if (ttys_login[i] == 1)
+            ++logins;
+    }
+
+    /* If there is only one login, then we know the user has
+     * logged out. If somehow it is under 1, just assume the
+     * user has no sessions. */
+    if (logins <= 1)
+    {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
 PAM_EXTERN int
 pam_sm_close_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
@@ -287,47 +253,15 @@ pam_sm_close_session (pam_handle_t *pamh, int flags, int argc, const char **argv
     /* get length for uid as ascii string, i.e. in file/folder name */
     l = intlen ((int) pw->pw_uid);
 
+    char file[sizeof (PARENT_DIR) + l + 2];
+    print_filename (file, (int) pw->pw_uid, l);
+
+    if (!user_has_session (user))
     {
-        char file[sizeof (PARENT_DIR) + l + 2];
-        int fd;
-        int count = 0;
+        /* construct runtime dir name, i.e. remove the dot before uid */
+        memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
 
-        print_filename (file, (int) pw->pw_uid, l);
-        fd = open_and_lock (file);
-        if (fd < 0)
-            return PAM_SESSION_ERR;
-
-        count = read_counter (fd);
-        if (count < 0)
-        {
-            /* -2: dir not usable, but not a failure */
-            r = (count == -2) ? 0 : -1;
-            goto done;
-        }
-
-        /* make sure we don't go below zero, just in case */
-        if (count > 0)
-            --count;
-
-        if (count == 0)
-        {
-            /* construct runtime dir name, i.e. remove the dot before uid */
-            memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
-
-            r = rmrf (file);
-            if (r < 0)
-                count = -1;
-        }
-
-        r = write_counter (fd, count);
-        if (r < 0)
-            goto done;
-
-        if (count == -1)
-            r = -1;
-
-done:
-        close (fd); /* also unlocks */
+        r = rmrf (file);
     }
 
     return (r == 0) ? PAM_SUCCESS : PAM_SESSION_ERR;
@@ -360,33 +294,12 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 
     {
         char file[sizeof (PARENT_DIR) + l + 2];
-        int fd;
-        int count = 0;
         int secbits = -1;
 
         print_filename (file, (int) pw->pw_uid, l);
-        fd = open_and_lock (file);
-        if (fd < 0)
-            return PAM_SESSION_ERR;
-
-        count = read_counter (fd);
-        if (count < 0)
-        {
-            /* -2: dir not usable, but not a failure */
-            r = (count == -2) ? 0 : -1;
-            goto done;
-        }
 
         /* construct runtime dir name, i.e. remove the dot before uid */
         memmove (file + sizeof (PARENT_DIR), file + sizeof (PARENT_DIR) + 1, l + 1);
-
-        /* update counter now, so we don't have to undo folder creation if
-         * updating the counter fails, etc. Having a count with a failure to
-         * create the folder isn't that big a deal (plus rare enough) to be
-         * worthy of complicating things. */
-        r = write_counter (fd, ++count);
-        if (r < 0)
-            goto done;
 
         /* flag for processing on close_session */
         if (pam_set_data (pamh, FLAG_NAME, (void *) 1, NULL) != PAM_SUCCESS)
@@ -394,8 +307,6 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
             /* well shit... try to revert, though we can't do nothing if it
              * fails. A PAM_BUF_ERR (only possible error) should be pretty rare
              * though (especially combined with a failure to re-write). */
-            write_counter (fd, --count);
-            r = -1;
             goto done;
         }
 
@@ -407,7 +318,6 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         /* set euid and egid so if we do create the dir, it is owned by the user */
         if (seteuid (pw->pw_uid) < 0 || setegid (pw->pw_gid) < 0)
         {
-            r = -1;
             goto done;
         }
         if (mkdir (file, S_IRWXU) == 0 || errno == EEXIST)
@@ -424,14 +334,12 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         /* restore */
         if (seteuid (0) < 0 || setegid (0) < 0)
         {
-            r = -1;
             goto done;
         }
 
 done:
         if (secbits != -1)
             prctl (PR_SET_SECUREBITS, (unsigned long) secbits);
-        close (fd); /* also unlocks */
     }
 
     return (r == 0) ? PAM_SUCCESS : PAM_SESSION_ERR;
