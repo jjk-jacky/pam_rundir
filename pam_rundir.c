@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <dirent.h>
+#include <stdio.h>
 
 #define PAM_SM_SESSION
 #include <security/pam_modules.h>
@@ -102,12 +103,7 @@ static inline void
 print_filename (char *s, int uid, int l)
 {
     /* construct file name, e.g: "/run/users/.1000" */
-    memcpy (s, PARENT_DIR, sizeof (PARENT_DIR) - 1);
-    s[sizeof (PARENT_DIR) - 1] = '/';
-    s[sizeof (PARENT_DIR)] = '.';
-    print_int (s + sizeof (PARENT_DIR) + 1, uid, l);
-    s[sizeof (PARENT_DIR) + 1 + l] = '\0';
-
+    snprintf(s, sizeof(PARENT_DIR) + l + 2, "%s/.%d", PARENT_DIR, uid);
 }
 
 static int
