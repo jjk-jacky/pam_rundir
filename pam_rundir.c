@@ -197,7 +197,7 @@ write_counter (int fd, int count)
             r = write (fd, buf + w, l - w);
             if (r < 0)
             {
-                if (errno = EINTR)
+                if (errno == EINTR)
                     continue;
                 if (w > 0)
                     emergency_invalidate_counter (fd);
